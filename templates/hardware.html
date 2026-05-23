@@ -1,0 +1,1054 @@
+{% extends "base.html" %}
+
+{% block title %}Конфигурации - Программный комплекс аудита{% endblock %}
+
+{% macro is_main_program(program_name) %}
+    {% if not program_name %}
+        {{ false }}
+    {% else %}
+        {% set program_lower = program_name.lower() %}
+        {% set main_keywords = ['python', 'office', 'microsoft', 'chrome', 'firefox', 'adobe', 'word', 'excel', 'powerpoint', 'browser', 'player', 'reader', 'telegram', 'whatsapp', 'skype', 'zoom', 'teamviewer', 'anydesk', 'winrar', '7-zip', 'vlc', 'photoshop', 'antivirus'] %}
+        {% set system_keywords = ['sdk', 'runtime', 'redistributable', 'extension', 'click-to-run', 'library'] %}
+        
+        {% set is_system = false %}
+        {% for keyword in system_keywords %}
+            {% if keyword in program_lower %}
+                {% set is_system = true %}
+            {% endif %}
+        {% endfor %}
+        
+        {% if is_system %}
+            {{ false }}
+        {% else %}
+            {% set is_main = false %}
+            {% for keyword in main_keywords %}
+                {% if keyword in program_lower %}
+                    {% set is_main = true %}
+                {% endif %}
+            {% endfor %}
+            {{ is_main }}
+        {% endif %}
+    {% endif %}
+{% endmacro %}
+
+{% macro is_system_component(program_name) %}
+    {% if not program_name %}
+        {{ false }}
+    {% else %}
+        {% set program_lower = program_name.lower() %}
+        {% set system_keywords = ['sdk', 'runtime', 'redistributable', 'extension', 'click-to-run', 'library', 'component', 'framework', 'windows kit', 'development kit'] %}
+        
+        {# Сначала проверяем, не основная ли это программа #}
+        {% if is_main_program(program_name) %}
+            {{ false }}
+        {% else %}
+            {% set is_system = false %}
+            {% for keyword in system_keywords %}
+                {% if keyword in program_lower %}
+                    {% set is_system = true %}
+                {% endif %}
+            {% endfor %}
+            {{ is_system }}
+        {% endif %}
+    {% endif %}
+{% endmacro %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4"><i class="fas fa-microchip"></i> Сравнение конфигураций</h1>
+    </div>
+</div>
+
+<!-- Форма выбора параметров -->
+<div class="card mb-4">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0"><i class="fas fa-filter"></i> Выберите параметры просмотра</h5>
+    </div>
+    <div class="card-body">
+        <form id="configForm" method="GET" action="{{ url_for('hardware_page') }}" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label fw-bold">Компьютер:</label>
+                <select name="client_id" class="form-select" required id="clientSelect">
+                    <option value="">Выберите компьютер</option>
+                    {% for client in clients %}
+                    <option value="{{ client.client_id }}" 
+                        {% if client.client_id == selected_client %}selected{% endif %}>
+                        {% if client.computer_name and client.computer_name != 'Unknown' %}
+                            {{ client.computer_name }}
+                        {% else %}
+                            {{ client.client_id }}
+                        {% endif %}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="col-md-4">
+                <label class="form-label fw-bold">Начало периода:</label>
+                <input type="datetime-local" name="start" class="form-control" 
+                       value="{{ start_time }}" 
+                       max="{{ now().strftime('%Y-%m-%dT%H:%M') }}"
+                       id="startTime"
+                       data-max-hours="{{ max_hours }}">
+            </div>
+            
+            <div class="col-md-4">
+                <label class="form-label fw-bold">Конец периода:</label>
+                <input type="datetime-local" name="end" class="form-control" 
+                       value="{{ end_time }}"
+                       max="{{ now().strftime('%Y-%m-%dT%H:%M') }}"
+                       id="endTime">
+                <small class="text-muted">Максимум {{ max_hours }} часов</small>
+            </div>
+            
+            <div class="col-md-6">
+                <button type="submit" class="btn btn-success w-100">
+                    <i class="fas fa-search"></i> Показать исторические конфигурации
+                </button>
+            </div>
+            
+            <div class="col-md-6">
+                <button type="button" class="btn btn-warning w-100" id="requestConfigBtn" 
+                        onclick="requestLiveConfig()">
+                    <i class="fas fa-sync-alt"></i> Запросить текущую конфигурацию
+                </button>
+            </div>
+        </form>
+        
+        {% if error_message %}
+        <div class="alert alert-danger mt-3" role="alert">
+            <i class="fas fa-exclamation-triangle"></i> {{ error_message }}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Блок для живой конфигурации -->
+<div id="liveConfigSection" class="mb-4" style="display: none;">
+    <!-- Заголовок живой конфигурации -->
+    <div class="card">
+        <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">
+                <i class="fas fa-sync-alt"></i> 
+                Текущая конфигурация: <strong id="liveConfigClientName"></strong>
+            </h5>
+            <span class="badge bg-light text-dark" id="liveConfigTimestamp">Текущий снимок</span>
+        </div>
+    </div>
+
+    <!-- Блок ожидания -->
+    <div id="configStatus" class="card mt-3">
+        <div class="card-body">
+            <div class="text-center">
+                <div class="spinner-border text-warning" role="status">
+                    <span class="visually-hidden">Загрузка...</span>
+                </div>
+                <p class="mt-2 fw-bold">Ожидание данных от клиента...</p>
+                <div class="progress mb-3">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div>
+                </div>
+                <div class="alert alert-info">
+                    <h6><i class="fas fa-info-circle"></i> Инструкция для пользователя:</h6>
+                    <p class="mb-1">1. Попросите пользователя запустить программу мониторинга</p>
+                    <p class="mb-1">2. Пользователь должен нажать кнопку "Отправить отчёт"</p>
+                    <p class="mb-0">3. Или ввести этот ID запроса: <code id="currentRequestId" class="fw-bold"></code></p>
+                </div>
+                <p><strong>Компьютер:</strong> <span id="currentClient"></span></p>
+                <button class="btn btn-outline-danger btn-sm" onclick="cancelConfigRequest()">
+                    <i class="fas fa-times"></i> Отменить запрос
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Результаты живой конфигурации -->
+    <div id="configResult" style="display: none;">
+        <!-- Сюда будет загружена конфигурация -->
+    </div>
+</div>
+
+<!-- Блок для исторических конфигураций -->
+<div id="historicalConfigSection" {% if not selected_client %}style="display: none;"{% endif %}>
+    {% if selected_client %}
+        <!-- Снимки конфигураций -->
+        {% if snapshots %}
+        <div class="card">
+            <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="fas fa-history"></i> 
+                    История конфигураций: <strong>
+                        {% for client in clients %}
+                            {% if client.client_id == selected_client %}
+                                {% if client.computer_name and client.computer_name != 'Unknown' %}
+                                    {{ client.computer_name }}
+                                {% else %}
+                                    {{ client.client_id }}
+                                {% endif %}
+                            {% endif %}
+                        {% endfor %}
+                    </strong>
+                </h5>
+                <span class="badge bg-light text-dark">{{ snapshots|length }} снимков</span>
+            </div>
+            
+            <div class="card-body">
+                <div class="row">
+                    {% for snapshot in snapshots %}
+                    <div class="col-12 mb-4">
+                        <div class="card">
+                            <div class="card-header bg-light">
+                                <h6 class="mb-0">
+                                    <i class="fas fa-camera text-primary"></i> 
+                                    Снимок от: <strong>{{ snapshot.snapshot_date.strftime('%d.%m.%Y %H:%M') }}</strong>
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <!-- Аппаратное обеспечение -->
+                                <div class="mb-4">
+                                    <h6 class="border-bottom pb-2 mb-3">
+                                        <i class="fas fa-desktop text-primary"></i> 
+                                        <strong>Аппаратное обеспечение</strong>
+                                    </h6>
+                                    {% if snapshot.hardware_data %}
+                                        {% set hw = snapshot.hardware_data %}
+                                        <div class="row">
+                                            <div class="col-md-6 mb-2">
+                                                <strong>Компьютер:</strong><br>
+                                                <span class="fs-6">{{ hw.computer_name }}</span>
+                                            </div>
+                                            <div class="col-md-6 mb-2">
+                                                <strong>Процессор:</strong><br>
+                                                <span class="fs-6">{{ hw.processor }}</span>
+                                            </div>
+                                            <div class="col-md-6 mb-2">
+                                                <strong>Память:</strong><br>
+                                                <span class="fs-6 text-success">{{ hw.total_memory_gb }} GB</span>
+                                            </div>
+                                            <div class="col-md-6 mb-2">
+                                                <strong>Видеокарта:</strong><br>
+                                                <span class="fs-6">{{ hw.gpu }}</span>
+                                            </div>
+                                            <div class="col-md-6 mb-2">
+                                                <strong>ОС:</strong><br>
+                                                <span class="fs-6">{{ hw.os_version }}</span>
+                                            </div>
+                                            {% if hw.storage %}
+                                            <div class="col-12 mb-2">
+                                                <strong>Диски:</strong><br>
+                                                {% for disk in hw.storage.split(', ') %}
+                                                <span class="fs-6 text-muted">{{ disk }}</span><br>
+                                                {% endfor %}
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                    {% else %}
+                                        <div class="text-center py-3">
+                                            <i class="fas fa-exclamation-triangle text-warning"></i>
+                                            <p class="text-muted mt-2">Нет данных об аппаратном обеспечении</p>
+                                        </div>
+                                    {% endif %}
+                                </div>
+
+                                <!-- Программное обеспечение -->
+                                {% if snapshot.software_data %}
+                                    {% set sw = snapshot.software_data %}
+                                    
+                                    <!-- .NET Framework -->
+                                    {% if sw.dotnet_version %}
+                                    <div class="mb-4">
+                                        <h6 class="border-bottom pb-2 mb-3">
+                                            <i class="fas fa-code text-success"></i> 
+                                            <strong>Программное обеспечение</strong>
+                                        </h6>
+                                        <div class="row">
+                                            <div class="col-12">
+                                                <strong>.NET Framework:</strong><br>
+                                                <span class="fs-6 text-primary">{{ sw.dotnet_version }}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endif %}
+
+                                    <!-- Установленные программы -->
+                                    {% if sw.installed_programs and sw.installed_programs|length > 0 %}
+                                        <!-- Разделяем программы на категории -->
+                                        {% set main_programs = [] %}
+                                        {% set system_components = [] %}
+                                        {% set other_programs = [] %}
+                                        
+                                        {% for program in sw.installed_programs %}
+                                            {% if is_main_program(program) %}
+                                                {% set _ = main_programs.append(program) %}
+                                            {% elif is_system_component(program) %}
+                                                {% set _ = system_components.append(program) %}
+                                            {% else %}
+                                                {% set _ = other_programs.append(program) %}
+                                            {% endif %}
+                                        {% endfor %}
+
+                                       
+                                        <!-- Системные компоненты -->
+                                        {% if system_components %}
+                                        <div class="mb-4">
+                                            <h6 class="border-bottom pb-2 mb-3">
+                                                <i class="fas fa-cogs text-info"></i> 
+                                                <strong>Системные компоненты</strong>
+                                                <span class="badge bg-info ms-2">{{ system_components|length }}</span>
+                                                <button type="button" class="btn btn-sm btn-outline-primary float-end" data-bs-toggle="modal" data-bs-target="#systemComponentsModal{{ loop.index }}">
+                                                    <i class="fas fa-expand"></i> Развернуть
+                                                </button>
+                                            </h6>
+                                            <div class="table-responsive" style="max-height: 300px;">
+                                                <table class="table table-striped table-hover mb-0">
+                                                    <thead class="table-info sticky-top">
+                                                        <tr>
+                                                            <th width="100%">Название компонента</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {% for program in system_components %}
+                                                        <tr>
+                                                            <td>
+                                                                <div class="d-flex align-items-center">
+                                                                    <i class="fas fa-cog text-info me-2"></i>
+                                                                    <span>{{ program }}</span>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                        {% endif %}
+
+                                        <!-- Все установленные программы -->
+                                        <div class="mb-3">
+                                            <h6 class="border-bottom pb-2 mb-3">
+                                                <i class="fas fa-list text-primary"></i> 
+                                                <strong>Все установленные программы</strong>
+                                                <span class="badge bg-primary ms-2">{{ sw.installed_programs|length }}</span>
+                                                <button type="button" class="btn btn-sm btn-outline-primary float-end" data-bs-toggle="modal" data-bs-target="#allProgramsModal{{ loop.index }}">
+                                                    <i class="fas fa-expand"></i> Развернуть
+                                                </button>
+                                            </h6>
+                                            <div class="table-responsive" style="max-height: 300px;">
+                                                <table class="table table-striped table-hover mb-0">
+                                                    <thead class="table-light sticky-top">
+                                                        <tr>
+                                                            <th width="100%">Название программы</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {% for program in sw.installed_programs %}
+                                                        <tr>
+                                                            <td>
+                                                                <div class="d-flex align-items-center">
+                                                                    {% if program in main_programs %}
+                                                                        <i class="fas fa-star text-warning me-2" title="Основная программа"></i>
+                                                                    {% elif program in system_components %}
+                                                                        <i class="fas fa-cog text-info me-2" title="Системный компонент"></i>
+                                                                    {% else %}
+                                                                        <i class="fas fa-cube text-muted me-2"></i>
+                                                                    {% endif %}
+                                                                    <span>{{ program }}</span>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>           
+                                        </div>
+                                    {% else %}
+                                        <div class="alert alert-light text-center py-3">
+                                            <i class="fas fa-info-circle text-muted mb-2"></i>
+                                            <p class="text-muted mb-0">Нет данных об установленных программах</p>
+                                        </div>
+                                    {% endif %}
+                                {% else %}
+                                    <div class="alert alert-light text-center py-3">
+                                        <i class="fas fa-info-circle text-muted mb-2"></i>
+                                        <p class="text-muted mb-0">Нет данных о программном обеспечении</p>
+                                    </div>
+                                {% endif %}
+                            </div>
+                            <div class="card-footer text-muted">
+                                <small>
+                                    <i class="fas fa-clock"></i> 
+                                    Создан: {{ snapshot.created_at.strftime('%d.%m.%Y %H:%M') }}
+                                </small>
+                            </div>
+                        </div>
+
+                        <!-- Модальные окна для развернутых списков -->
+                        
+                        <!-- Модальное окно для основных программ -->
+                        {% if main_programs %}
+                        <div class="modal fade" id="mainProgramsModal{{ loop.index }}" tabindex="-1" aria-labelledby="mainProgramsModalLabel{{ loop.index }}" aria-hidden="true">
+                            <div class="modal-dialog modal-lg">
+                                <div class="modal-content">
+                                    <div class="modal-header bg-warning text-dark">
+                                        <h5 class="modal-title" id="mainProgramsModalLabel{{ loop.index }}">
+                                            <i class="fas fa-star"></i> Основные программы ({{ main_programs|length }})
+                                        </h5>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        <div class="table-responsive" style="max-height: 60vh;">
+                                            <table class="table table-striped table-hover">
+                                                <thead class="table-warning sticky-top">
+                                                    <tr>
+                                                        <th width="100%">Название программы</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% for program in main_programs %}
+                                                    <tr>
+                                                        <td>
+                                                            <div class="d-flex align-items-center">
+                                                                <i class="fas fa-star text-warning me-2"></i>
+                                                                <span>{{ program }}</span>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Модальное окно для системных компонентов -->
+                        {% if system_components %}
+                        <div class="modal fade" id="systemComponentsModal{{ loop.index }}" tabindex="-1" aria-labelledby="systemComponentsModalLabel{{ loop.index }}" aria-hidden="true">
+                            <div class="modal-dialog modal-lg">
+                                <div class="modal-content">
+                                    <div class="modal-header bg-info text-white">
+                                        <h5 class="modal-title" id="systemComponentsModalLabel{{ loop.index }}">
+                                            <i class="fas fa-cogs"></i> Системные компоненты ({{ system_components|length }})
+                                        </h5>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        <div class="table-responsive" style="max-height: 60vh;">
+                                            <table class="table table-striped table-hover">
+                                                <thead class="table-info sticky-top">
+                                                    <tr>
+                                                        <th width="100%">Название компонента</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% for program in system_components %}
+                                                    <tr>
+                                                        <td>
+                                                            <div class="d-flex align-items-center">
+                                                                <i class="fas fa-cog text-info me-2"></i>
+                                                                <span>{{ program }}</span>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Модальное окно для всех программ -->
+                        {% if sw.installed_programs and sw.installed_programs|length > 0 %}
+                        <div class="modal fade" id="allProgramsModal{{ loop.index }}" tabindex="-1" aria-labelledby="allProgramsModalLabel{{ loop.index }}" aria-hidden="true">
+                            <div class="modal-dialog modal-xl">
+                                <div class="modal-content">
+                                    <div class="modal-header bg-primary text-white">
+                                        <h5 class="modal-title" id="allProgramsModalLabel{{ loop.index }}">
+                                            <i class="fas fa-list"></i> Все установленные программы ({{ sw.installed_programs|length }})
+                                        </h5>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        <div class="table-responsive" style="max-height: 70vh;">
+                                            <table class="table table-striped table-hover">
+                                                <thead class="table-primary sticky-top">
+                                                    <tr>
+                                                        <th width="100%">Название программы</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% for program in sw.installed_programs %}
+                                                    <tr>
+                                                        <td>
+                                                            <div class="d-flex align-items-center">
+                                                                {% if program in main_programs %}
+                                                                    <i class="fas fa-star text-warning me-2" title="Основная программа"></i>
+                                                                {% elif program in system_components %}
+                                                                    <i class="fas fa-cog text-info me-2" title="Системный компонент"></i>
+                                                                {% else %}
+                                                                    <i class="fas fa-cube text-muted me-2"></i>
+                                                                {% endif %}
+                                                                <span>{{ program }}</span>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <div class="me-auto">
+                                            <small class="text-muted">
+                                                <i class="fas fa-star text-warning"></i> Основные: {{ main_programs|length }} |
+                                                <i class="fas fa-cog text-info"></i> Системные: {{ system_components|length }} |
+                                                <i class="fas fa-cube text-muted"></i> Остальные: {{ other_programs|length }}
+                                            </small>
+                                        </div>
+                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="card">
+            <div class="card-body text-center py-5">
+                <i class="fas fa-microchip fa-3x text-muted mb-3"></i>
+                <h5 class="text-muted">Нет данных о конфигурациях</h5>
+                <p class="text-muted">Клиент еще не отправлял информацию об оборудовании</p>
+            </div>
+        </div>
+        {% endif %}
+    {% else %}
+    <div class="card">
+        <div class="card-body text-center py-5">
+            <i class="fas fa-microchip fa-4x text-muted mb-3"></i>
+            <h5 class="text-muted">Выберите клиента для просмотра конфигураций</h5>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentRequestId = null;
+let statusCheckInterval = null;
+const maxHours = { max_hours };
+
+// Загрузка исторических конфигураций
+function loadHistoricalConfig() {
+    var clientId = document.getElementById('clientSelect').value;
+    var startTime = document.getElementById('startTime').value;
+    var endTime = document.getElementById('endTime').value;
+    
+    if (!clientId) {
+        alert('Выберите компьютер для просмотра конфигураций');
+        return false;
+    }
+    
+    // Валидация периода
+    var start = new Date(startTime);
+    var end = new Date(endTime);
+    var hoursDiff = (end - start) / (1000 * 60 * 60);
+    
+    if (hoursDiff > maxHours) {
+        alert('Ошибка: период не может превышать ' + maxHours + ' часов');
+        return false;
+    }
+    
+    if (hoursDiff <= 0) {
+        alert('Ошибка: конец периода должен быть после начала');
+        return false;
+    }
+    
+    return true;
+}
+
+// Обработчик отправки формы
+document.addEventListener('DOMContentLoaded', function() {
+    var configForm = document.getElementById('configForm');
+    if (configForm) {
+        configForm.addEventListener('submit', function(e) {
+            if (!loadHistoricalConfig()) {
+                e.preventDefault();
+            }
+        });
+    }
+    
+    // Активируем кнопку запроса конфигурации при выборе клиента
+    var clientSelect = document.getElementById('clientSelect');
+    if (clientSelect) {
+        clientSelect.addEventListener('change', function() {
+            var requestBtn = document.getElementById('requestConfigBtn');
+            if (requestBtn) {
+                requestBtn.disabled = !this.value;
+            }
+        });
+        
+        // Инициализируем состояние кнопки при загрузке
+        var requestBtn = document.getElementById('requestConfigBtn');
+        if (requestBtn) {
+            requestBtn.disabled = !clientSelect.value;
+        }
+    }
+    
+    // Автоматическое обновление времени при изменении
+    var startTimeInput = document.getElementById('startTime');
+    if (startTimeInput) {
+        startTimeInput.addEventListener('change', function() {
+            var start = new Date(this.value);
+            var end = new Date(start.getTime() + maxHours * 60 * 60 * 1000);
+            var endTimeInput = document.getElementById('endTime');
+            if (endTimeInput) {
+                endTimeInput.value = end.toISOString().slice(0, 16);
+            }
+        });
+    }
+});
+
+// Функция запроса живой конфигурации - ТЕПЕРЬ ИСПОЛЬЗУЕТ ТОТ ЖЕ ОТЧЕТ
+async function requestLiveConfig() {
+    var clientId = document.getElementById('clientSelect').value;
+    var clientName = document.getElementById('clientSelect').options[document.getElementById('clientSelect').selectedIndex].text;
+    
+    if (!clientId) {
+        alert('Выберите компьютер для запроса конфигурации');
+        return;
+    }
+    
+    try {
+        // Скрываем исторические конфигурации, показываем живые
+        document.getElementById('historicalConfigSection').style.display = 'none';
+        document.getElementById('liveConfigSection').style.display = 'block';
+        document.getElementById('currentClient').textContent = clientName;
+        document.getElementById('liveConfigClientName').textContent = clientName;
+        
+        // ОТПРАВЛЯЕМ ЗАПРОС НА ТОТ ЖЕ API ЧТО И ДЛЯ ОТЧЕТОВ
+        var response = await fetch('/api/request-report', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                client_id: clientId
+            })
+        });
+        
+        var result = await response.json();
+        
+        if (result.status === 'success') {
+            currentRequestId = result.request_id;
+            document.getElementById('currentRequestId').textContent = currentRequestId;
+            
+            // Запускаем проверку статуса
+            startConfigStatusChecking();
+        } else {
+            alert('Ошибка: ' + result.message);
+            document.getElementById('liveConfigSection').style.display = 'none';
+        }
+        
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('Произошла ошибка при запросе конфигурации');
+        document.getElementById('liveConfigSection').style.display = 'none';
+    }
+}
+
+// Функция проверки статуса конфигурации
+function startConfigStatusChecking() {
+    if (statusCheckInterval) {
+        clearInterval(statusCheckInterval);
+    }
+    
+    statusCheckInterval = setInterval(async function() {
+        try {
+            // ПРОВЕРЯЕМ СТАТУС ТОГО ЖЕ ОТЧЕТА
+            var response = await fetch('/api/check-report-status/' + currentRequestId);
+            var result = await response.json();
+            
+            if (result.status === 'success') {
+                if (result.request_status === 'completed') {
+                    // Данные получены, загружаем конфигурацию
+                    clearInterval(statusCheckInterval);
+                    await loadLiveConfigData();
+                } else if (result.request_status === 'timeout') {
+                    // Таймаут
+                    clearInterval(statusCheckInterval);
+                    document.getElementById('configStatus').innerHTML = 
+                        '<div class="alert alert-danger text-center">' +
+                        '<i class="fas fa-exclamation-triangle fa-2x mb-2"></i>' +
+                        '<h5>Время ожидания истекло</h5>' +
+                        '<p>Клиент не ответил в течение 5 минут.</p>' +
+                        '<button class="btn btn-warning" onclick="requestLiveConfig()">' +
+                        '<i class="fas fa-redo"></i> Попробовать снова' +
+                        '</button>' +
+                        '</div>';
+                }
+            }
+        } catch (error) {
+            console.error('Ошибка проверки статуса:', error);
+        }
+    }, 2000);
+}
+
+// Функция загрузки данных конфигурации
+async function loadLiveConfigData() {
+    try {
+        // ПОЛУЧАЕМ ДАННЫЕ ИЗ ТОГО ЖЕ ОТЧЕТА
+        var response = await fetch('/api/get-report-data/' + currentRequestId);
+        var result = await response.json();
+        
+        if (result.status === 'success') {
+            // Скрываем блок ожидания, показываем результат
+            document.getElementById('configStatus').style.display = 'none';
+            document.getElementById('configResult').style.display = 'block';
+            
+            // Отображаем данные конфигурации ИЗ ОТЧЕТА
+            displayLiveConfig(result.data);
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки конфигурации:', error);
+        document.getElementById('configStatus').innerHTML = 
+            '<div class="alert alert-danger text-center">' +
+            '<i class="fas fa-exclamation-triangle"></i>' +
+            'Ошибка загрузки конфигурации: ' + error.message +
+            '</div>';
+    }
+}
+
+// Функция отображения живой конфигурации - ТЕПЕРЬ БЕЗ ОСНОВНЫХ ПРОГРАММ
+function displayLiveConfig(data) {
+    var configResult = document.getElementById('configResult');
+    var html = '';
+
+    // Аппаратное обеспечение и ПО из отчета
+    if (data.hardware || data.software) {
+        html += '<div class="card mb-4">' +
+            '<div class="card-header bg-light">' +
+                '<h6 class="mb-0">' +
+                    '<i class="fas fa-camera text-primary"></i> ' +
+                    '<strong>Текущая конфигурация</strong>' +
+                '</h6>' +
+            '</div>' +
+            '<div class="card-body">';
+
+        // Аппаратное обеспечение
+        if (data.hardware) {
+            html += '<div class="mb-4">' +
+                '<h6 class="border-bottom pb-2 mb-3">' +
+                    '<i class="fas fa-desktop text-primary"></i> ' +
+                    '<strong>Аппаратное обеспечение</strong>' +
+                '</h6>' +
+                '<div class="row">';
+
+            var hw = data.hardware;
+            html += '<div class="col-md-6 mb-2">' +
+                '<strong>Компьютер:</strong><br>' +
+                '<span class="fs-6">' + (hw.computer_name || '—') + '</span>' +
+            '</div>' +
+            '<div class="col-md-6 mb-2">' +
+                '<strong>Процессор:</strong><br>' +
+                '<span class="fs-6">' + (hw.processor || '—') + '</span>' +
+            '</div>' +
+            '<div class="col-md-6 mb-2">' +
+                '<strong>Память:</strong><br>' +
+                '<span class="fs-6 text-success">' + (hw.total_memory_gb ? hw.total_memory_gb + ' GB' : '—') + '</span>' +
+            '</div>' +
+            '<div class="col-md-6 mb-2">' +
+                '<strong>Видеокарта:</strong><br>' +
+                '<span class="fs-6">' + (hw.gpu || '—') + '</span>' +
+            '</div>' +
+            '<div class="col-md-6 mb-2">' +
+                '<strong>ОС:</strong><br>' +
+                '<span class="fs-6">' + (hw.os_version || '—') + '</span>' +
+            '</div>';
+
+            if (hw.storage) {
+                html += '<div class="col-12 mb-2">' +
+                    '<strong>Диски:</strong><br>' +
+                    '<span class="fs-6 text-muted">' + hw.storage + '</span>' +
+                '</div>';
+            }
+
+            html += '</div></div>';
+        }
+
+        // Программное обеспечение
+        if (data.software) {
+            var sw = data.software;
+            
+            // .NET Framework
+            if (sw.dotnet_version) {
+                html += '<div class="mb-4">' +
+                    '<h6 class="border-bottom pb-2 mb-3">' +
+                        '<i class="fas fa-code text-success"></i> ' +
+                        '<strong>Программное обеспечение</strong>' +
+                    '</h6>' +
+                    '<div class="row">' +
+                        '<div class="col-12">' +
+                            '<strong>.NET Framework:</strong><br>' +
+                            '<span class="fs-6 text-primary">' + sw.dotnet_version + '</span>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>';
+            }
+
+            // Установленные программы - ТЕПЕРЬ БЕЗ ОСНОВНЫХ ПРОГРАММ
+            if (sw.installed_programs && sw.installed_programs.length > 0) {
+                // Разделяем программы на категории (только системные компоненты и остальные)
+                var systemComponents = [];
+                var otherPrograms = [];
+                
+                for (var i = 0; i < sw.installed_programs.length; i++) {
+                    var program = sw.installed_programs[i];
+                    if (isSystemComponent(program)) {
+                        systemComponents.push(program);
+                    } else {
+                        otherPrograms.push(program);
+                    }
+                }
+
+                // Системные компоненты
+                if (systemComponents.length > 0) {
+                    html += '<div class="mb-4">' +
+                        '<h6 class="border-bottom pb-2 mb-3">' +
+                            '<i class="fas fa-cogs text-info"></i> ' +
+                            '<strong>Системные компоненты</strong>' +
+                            '<span class="badge bg-info ms-2">' + systemComponents.length + '</span>' +
+                            '<button type="button" class="btn btn-sm btn-outline-primary float-end" onclick="expandSystemComponents()">' +
+                                '<i class="fas fa-expand"></i> Развернуть' +
+                            '</button>' +
+                        '</h6>' +
+                        '<div class="table-responsive" style="max-height: 300px;">' +
+                            '<table class="table table-striped table-hover mb-0">' +
+                                '<thead class="table-info sticky-top">' +
+                                    '<tr><th width="100%">Название компонента</th></tr>' +
+                                '</thead>' +
+                                '<tbody>';
+
+                    for (var i = 0; i < systemComponents.length; i++) {
+                        html += '<tr>' +
+                            '<td>' +
+                                '<div class="d-flex align-items-center">' +
+                                    '<i class="fas fa-cog text-info me-2"></i>' +
+                                    '<span>' + systemComponents[i] + '</span>' +
+                                '</div>' +
+                            '</td>' +
+                        '</tr>';
+                    }
+
+                    html += '</tbody></table></div></div>';
+                }
+
+                // Все установленные программы
+                html += '<div class="mb-3">' +
+                    '<h6 class="border-bottom pb-2 mb-3">' +
+                        '<i class="fas fa-list text-primary"></i> ' +
+                        '<strong>Все установленные программы</strong>' +
+                        '<span class="badge bg-primary ms-2">' + sw.installed_programs.length + '</span>' +
+                        '<button type="button" class="btn btn-sm btn-outline-primary float-end" onclick="expandAllPrograms()">' +
+                            '<i class="fas fa-expand"></i> Развернуть' +
+                        '</button>' +
+                    '</h6>' +
+                    '<div class="table-responsive" style="max-height: 300px;">' +
+                        '<table class="table table-striped table-hover mb-0">' +
+                            '<thead class="table-light sticky-top">' +
+                                '<tr><th width="100%">Название программы</th></tr>' +
+                            '</thead>' +
+                            '<tbody>';
+
+                for (var i = 0; i < sw.installed_programs.length; i++) {
+                    var program = sw.installed_programs[i];
+                    var iconClass = 'fas fa-cube text-muted me-2';
+                    var iconTitle = 'title="Программа"';
+                    
+                    if (systemComponents.includes(program)) {
+                        iconClass = 'fas fa-cog text-info me-2';
+                        iconTitle = 'title="Системный компонент"';
+                    }
+                    
+                    html += '<tr>' +
+                        '<td>' +
+                            '<div class="d-flex align-items-center">' +
+                                '<i class="' + iconClass + '" ' + iconTitle + '></i>' +
+                                '<span>' + program + '</span>' +
+                            '</div>' +
+                        '</td>' +
+                    '</tr>';
+                }
+
+                html += '</tbody></table></div>' +
+                    '<div class="mt-2">' +
+                        '<small class="text-muted">' +
+                            '<i class="fas fa-cog text-info"></i> Системные: ' + systemComponents.length + ' | ' +
+                            '<i class="fas fa-cube text-muted"></i> Остальные: ' + otherPrograms.length +
+                        '</small>' +
+                    '</div>' +
+                '</div>';
+            } else {
+                html += '<div class="alert alert-light text-center py-3">' +
+                    '<i class="fas fa-info-circle text-muted mb-2"></i>' +
+                    '<p class="text-muted mb-0">Нет данных об установленных программах</p>' +
+                '</div>';
+            }
+        } else {
+            html += '<div class="alert alert-light text-center py-3">' +
+                '<i class="fas fa-info-circle text-muted mb-2"></i>' +
+                '<p class="text-muted mb-0">Нет данных о программном обеспечении</p>' +
+            '</div>';
+        }
+
+        html += '</div>' +
+            '<div class="card-footer text-muted">' +
+                '<small>' +
+                    '<i class="fas fa-clock"></i> ' +
+                    'Получен: ' + new Date().toLocaleString('ru-RU') +
+                '</small>' +
+            '</div>' +
+        '</div>';
+    } else {
+        html += '<div class="alert alert-info text-center">' +
+            '<i class="fas fa-info-circle fa-2x mb-3"></i>' +
+            '<h5>Нет данных конфигурации</h5>' +
+            '<p class="mb-0">Клиент не предоставил данных о конфигурации.</p>' +
+        '</div>';
+    }
+
+    // Кнопка для нового запроса
+    html += '<div class="mt-3 text-center">' +
+        '<button class="btn btn-warning" onclick="requestLiveConfig()">' +
+        '<i class="fas fa-redo"></i> Запросить новую конфигурацию' +
+        '</button>' +
+    '</div>';
+
+    configResult.innerHTML = html;
+    document.getElementById('liveConfigTimestamp').textContent = 'Текущий снимок';
+}
+
+// Функции для определения типа программы (аналогичные макросам в Jinja2)
+function isMainProgram(programName) {
+    if (!programName) return false;
+    
+    var programLower = programName.toLowerCase();
+    var mainKeywords = ['python', 'office', 'microsoft', 'chrome', 'firefox', 'adobe', 'word', 'excel', 'powerpoint', 'browser', 'player', 'reader', 'telegram', 'whatsapp', 'skype', 'zoom', 'teamviewer', 'anydesk', 'winrar', '7-zip', 'vlc', 'photoshop', 'antivirus'];
+    var systemKeywords = ['sdk', 'runtime', 'redistributable', 'extension', 'click-to-run', 'library'];
+    
+    // Проверяем, не является ли системным компонентом
+    var isSystem = systemKeywords.some(function(keyword) {
+        return programLower.includes(keyword);
+    });
+    
+    if (isSystem) return false;
+    
+    // Проверяем, является ли основной программой
+    return mainKeywords.some(function(keyword) {
+        return programLower.includes(keyword);
+    });
+}
+
+function isSystemComponent(programName) {
+    if (!programName) return false;
+    
+    var programLower = programName.toLowerCase();
+    var systemKeywords = ['sdk', 'runtime', 'redistributable', 'extension', 'click-to-run', 'library', 'component', 'framework', 'windows kit', 'development kit'];
+    
+    // Сначала проверяем, не основная ли это программа
+    if (isMainProgram(programName)) return false;
+    
+    // Проверяем, является ли системным компонентом
+    return systemKeywords.some(function(keyword) {
+        return programLower.includes(keyword);
+    });
+}
+
+// Отмена запроса конфигурации
+function cancelConfigRequest() {
+    if (statusCheckInterval) {
+        clearInterval(statusCheckInterval);
+    }
+    document.getElementById('liveConfigSection').style.display = 'none';
+    document.getElementById('historicalConfigSection').style.display = 'block';
+}
+</script>
+{% endblock %}
+
+<style>
+.table-responsive {
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+}
+
+.sticky-top {
+    position: sticky;
+    top: 0;
+    background-color: #f8f9fa;
+    z-index: 1;
+}
+
+.table thead th {
+    border-bottom: 2px solid #dee2e6;
+    font-weight: 600;
+}
+
+/* Стили для скроллбара как в отчете */
+.table-responsive::-webkit-scrollbar {
+    width: 8px;
+}
+
+.table-responsive::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 0 0.375rem 0.375rem 0;
+}
+
+.table-responsive::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+}
+
+.table-responsive::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
+
+.fs-6 {
+    font-size: 1rem !important;
+}
+
+/* Стили для модальных окон */
+.modal-header {
+    border-bottom: 2px solid rgba(0,0,0,.1);
+}
+
+.modal-footer {
+    border-top: 1px solid rgba(0,0,0,.1);
+}
+
+.table-warning thead {
+    background-color: #fff3cd !important;
+}
+
+.table-info thead {
+    background-color: #d1ecf1 !important;
+}
+
+.table-primary thead {
+    background-color: #cfe2ff !important;
+}
+</style>

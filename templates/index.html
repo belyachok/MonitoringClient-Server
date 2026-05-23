@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+
+{% block title %}Главная - Программный комплекс аудита{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4"><i class="fas fa-tachometer-alt"></i> Статистика</h1>
+    </div>
+</div>
+
+<!-- Статистика -->
+<div class="row mb-5">
+    <div class="col-md-3">
+        <div class="card text-white bg-gradient-indigo">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4>{{ stats.total_clients or 0 }}</h4>
+                        <p>Клиентов</p> 
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-desktop fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-gradient-teal">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4>{{ stats.total_events or 0 }}</h4>
+                        <p>Событий</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-database fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-gradient-orange">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4>{{ stats.active_clients_24h or 0 }}</h4>
+                        <p>Активных (24ч)</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-signal fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-gradient-pink">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h4>{{ (stats.events_by_type|length) or 0 }}</h4>
+                        <p>Типов событий</p>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-list fa-2x"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Быстрые действия -->
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-rocket"></i> Быстрые действия</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <a href="{{ url_for('reports_page') }}" class="btn btn-primary w-100 py-3">
+                            <i class="fas fa-chart-bar fa-2x mb-2"></i><br>
+                            Просмотр отчетов
+                        </a>
+                    </div>
+                    <div class="col-md-6">
+                        <a href="{{ url_for('clients_page') }}" class="btn btn-success w-100 py-3">
+                            <i class="fas fa-desktop fa-2x mb-2"></i><br>
+                            Управление клиентами
+                        </a>
+                    </div>
+                    <div class="col-md-6">
+                        <a href="{{ url_for('hardware_page') }}" class="btn btn-warning w-100 py-3">
+                            <i class="fas fa-microchip fa-2x mb-2"></i><br>
+                            Сравнение конфигураций
+                        </a>
+                    </div>
+                    <div class="col-md-6">
+                        <button onclick="loadStatistics()" class="btn btn-info w-100 py-3">
+                            <i class="fas fa-sync fa-2x mb-2"></i><br>
+                            Обновить статистику
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-info-circle"></i> Информация о системе</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>База данных:</strong> PostgreSQL</p>
+                <p><strong>Макс. период отчета:</strong> {{ config.MAX_REPORT_HOURS }} часов</p>
+                <p><strong>Последнее событие:</strong> 
+                    {% if stats.last_event %}
+                        {{ stats.last_event.strftime('%d.%m.%Y %H:%M') }}
+                    {% else %}
+                        Нет данных
+                    {% endif %}
+                </p>
+                
+                <hr>
+                <h6>Типы событий:</h6>
+                <ul class="list-unstyled">
+                    {% for type, count in stats.events_by_type.items() %}
+                    <li><span class="badge bg-secondary">{{ count }}</span> {{ type }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function loadStatistics() {
+    fetch('/api/statistics')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                location.reload();
+            }
+        });
+}
+
+// Автообновление каждые 30 секунд
+setTimeout(() => {
+    loadStatistics();
+}, 30000);
+</script>
+<style> .bg-gradient-indigo { background: linear-gradient(45deg, #6610f2, #6f42c1) !important; } 
+.bg-gradient-teal { background: linear-gradient(45deg, #20c997, #17a2b8) !important; } 
+.bg-gradient-orange { background: linear-gradient(45deg, #fd7e14, #e44d26) !important; } 
+.bg-gradient-pink { background: linear-gradient(45deg, #d63384, #e83e8c) !important; } </style>
+{% endblock %}

@@ -1,0 +1,1069 @@
+{% extends "base.html" %}
+
+{% block title %}Отчеты - Программный комплекс аудита{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4"><i class="fas fa-chart-bar"></i> Отчеты по активности</h1>
+    </div>
+</div>
+
+<!-- Форма выбора параметров -->
+<div class="card mb-4">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0"><i class="fas fa-filter"></i> Выберите параметры отчета</h5>
+    </div>
+    <div class="card-body">
+        <form id="reportForm" method="GET" action="{{ url_for('reports_page') }}" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label fw-bold">Компьютер:</label>
+                <select name="client_id" class="form-select" required id="clientSelect">
+                    <option value="">Выберите компьютер</option>
+                    {% for client in clients %}
+                    <option value="{{ client.client_id }}" 
+                        {% if client.client_id == selected_client %}selected{% endif %}>
+                        {% if client.computer_name and client.computer_name != 'Unknown' %}
+                            {{ client.computer_name }}
+                        {% else %}
+                            {{ client.client_id }}
+                        {% endif %}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="col-md-4">
+                <label class="form-label fw-bold">Начало периода:</label>
+                <input type="datetime-local" name="start" class="form-control" 
+                       value="{{ start_time }}" 
+                       max="{{ now().strftime('%Y-%m-%dT%H:%M') }}"
+                       id="startTime"
+                       data-max-hours="{{ max_hours }}">
+            </div>
+            
+            <div class="col-md-4">
+                <label class="form-label fw-bold">Конец периода:</label>
+                <input type="datetime-local" name="end" class="form-control" 
+                       value="{{ end_time }}"
+                       max="{{ now().strftime('%Y-%m-%dT%H:%M') }}"
+                       id="endTime">
+                <small class="text-muted">Максимум {{ max_hours }} часов</small>
+            </div>
+            
+            <div class="col-md-6">
+                <button type="submit" class="btn btn-success w-100">
+                    <i class="fas fa-search"></i> Показать исторический отчет
+                </button>
+            </div>
+            
+            <div class="col-md-6">
+                <button type="button" class="btn btn-warning w-100" id="requestReportBtn" 
+                        onclick="requestLiveReport()">
+                    <i class="fas fa-sync-alt"></i> Запросить текущий отчет у клиента
+                </button>
+            </div>
+        </form>
+        
+        {% if error_message %}
+        <div class="alert alert-danger mt-3" role="alert">
+            <i class="fas fa-exclamation-triangle"></i> {{ error_message }}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Блок для живого отчета -->
+<div id="liveReportSection" class="mb-4" style="display: none;">
+    <!-- Заголовок живого отчета -->
+    <div class="card">
+        <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">
+                <i class="fas fa-sync-alt"></i> 
+                Текущий отчет: <strong id="liveReportClientName"></strong>
+            </h5>
+            <span class="badge bg-light text-dark" id="liveReportEventsCount">0 событий</span>
+        </div>
+    </div>
+
+    <!-- Блок ожидания -->
+    <div id="reportStatus" class="card mt-3">
+        <div class="card-body">
+            <div class="text-center">
+                <div class="spinner-border text-warning" role="status">
+                    <span class="visually-hidden">Загрузка...</span>
+                </div>
+                <p class="mt-2 fw-bold">Ожидание данных от клиента...</p>
+                <div class="progress mb-3">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div>
+                </div>
+                <div class="alert alert-info">
+                    <h6><i class="fas fa-info-circle"></i> Инструкция для пользователя:</h6>
+                    <p class="mb-1">1. Попросите пользователя запустить программу мониторинга</p>
+                    <p class="mb-1">2. Пользователь должен нажать кнопку "Отправить отчет"</p>
+                    <p class="mb-0">3. Или ввести этот ID запроса: <code id="currentRequestId" class="fw-bold"></code></p>
+                </div>
+                <p><strong>Компьютер:</strong> <span id="currentClient"></span></p>
+                <button class="btn btn-outline-danger btn-sm" onclick="cancelRequest()">
+                    <i class="fas fa-times"></i> Отменить запрос
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Результаты живого отчета -->
+    <div id="reportResult" style="display: none;">
+        <!-- Сюда будет загружен отчет в том же формате что и исторический -->
+    </div>
+</div>
+
+<!-- Блок для исторического отчета -->
+<div id="historicalReportSection" {% if not selected_client %}style="display: none;"{% endif %}>
+    {% if selected_client %}
+        <!-- Статистика -->
+        {% if report_data %}
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card text-white bg-gradient-indigo">
+                    <div class="card-body text-center">
+                        <h4>{{ report_data|length }}</h4>
+                        <p class="mb-0">Всего событий</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-white bg-gradient-teal">
+                    <div class="card-body text-center">
+                        <h4>{{ (report_data|selectattr('data_type', 'equalto', 'website')|list)|length }}</h4>
+                        <p class="mb-0">Веб-сайтов</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-white bg-gradient-orange">
+                    <div class="card-body text-center">
+                        <h4>{{ (report_data|selectattr('data_type', 'equalto', 'process')|list)|length }}</h4>
+                        <p class="mb-0">Программ</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-white bg-gradient-pink">
+                    <div class="card-body text-center">
+                        <h4>{{ duration_hours }} ч</h4>
+                        <p class="mb-0">Период отчета</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Результаты отчета -->
+        <div class="card">
+            <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="fas fa-file-alt"></i> 
+                    Исторический отчет: <strong>
+                        {% for client in clients %}
+                            {% if client.client_id == selected_client %}
+                                {% if client.computer_name and client.computer_name != 'Unknown' %}
+                                    {{ client.computer_name }}
+                                {% else %}
+                                    {{ client.client_id }}
+                                {% endif %}
+                            {% endif %}
+                        {% endfor %}
+                    </strong>
+                </h5>
+                <span class="badge bg-light text-dark">{{ report_data|length }} событий</span>
+            </div>
+            
+            <div class="card-body">
+                {% if report_data %}
+                    <!-- Программы -->
+                    {% set processes = report_data|selectattr('data_type', 'equalto', 'process')|list %}
+                    {% if processes %}
+                    <div class="mb-4">
+                        <h6 class="border-bottom pb-2">
+                            <i class="fas fa-desktop text-info"></i> Запущенные программы
+                            <span class="badge bg-info ms-2">{{ processes|length }}</span>
+                        </h6>
+                        <div class="card">
+                            <div class="card-body p-0">
+                                <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                                    <table class="table table-striped table-hover mb-0">
+                                        <thead class="table-info sticky-top" style="position: sticky; top: 0; z-index: 1;">
+                                            <tr>
+                                                <th width="60%">Название программы</th>
+                                                <th width="20%">Память</th>
+                                                <th width="20%">Время</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for event in processes %}
+                                            <tr>
+                                                <td>
+                                                    <strong>{{ event.payload.process_name|default('Неизвестная программа', true) }}</strong>
+                                                </td>
+                                                <td>
+                                                    {% if event.payload.memory_mb %}
+                                                    <span class="badge bg-secondary">{{ event.payload.memory_mb }} МБ</span>
+                                                    {% else %}
+                                                    <span class="text-muted">—</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    <small class="text-muted">{{ event.timestamp.strftime('%H:%M') }}</small>
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <!-- Веб-сайты -->
+                    {% set websites = report_data|selectattr('data_type', 'equalto', 'website')|list %}
+                    {% if websites %}
+                    <div class="mb-4">
+                        <h6 class="border-bottom pb-2">
+                            <i class="fas fa-globe text-success"></i> Посещенные веб-сайты
+                            <span class="badge bg-success ms-2">{{ websites|length }}</span>
+                        </h6>
+                        <div class="card">
+                            <div class="card-body p-0">
+                                <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                                    <table class="table table-striped table-hover mb-0">
+                                        <thead class="table-success sticky-top" style="position: sticky; top: 0; z-index: 1;">
+                                            <tr>
+                                                <th width="30%">Браузер</th>
+                                                <th width="50%">Адрес сайта</th>
+                                                <th width="20%">Время</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for event in websites %}
+                                            <tr>
+                                                <td>
+                                                    <span class="badge bg-light text-dark">{{ event.payload.browser|default('—', true) }}</span>
+                                                </td>
+                                                <td>
+                                                    <small class="text-break">
+                                                        {% if event.payload.url %}
+                                                            {{ event.payload.url|replace('https://', '')|replace('http://', '')|truncate(60) }}
+                                                        {% else %}
+                                                            —
+                                                        {% endif %}
+                                                    </small>
+                                                </td>
+                                                <td>
+                                                    <small class="text-muted">{{ event.timestamp.strftime('%H:%M') }}</small>
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <!-- USB устройства -->
+                    {% set usb_events = report_data|selectattr('data_type', 'equalto', 'usb')|list %}
+                    {% set unique_usb_events = [] %}
+                    {% for event in usb_events %}
+                        {% set device_key = event.payload.device_name ~ event.payload.vendor_id ~ event.payload.product_id %}
+                        {% if device_key not in unique_usb_events|map(attribute='key')|list %}
+                            {% set _ = unique_usb_events.append({
+                                'event': event,
+                                'key': device_key,
+                                'actions': [event.payload.action],
+                                'timestamps': [event.timestamp]
+                            }) %}
+                        {% else %}
+                            {% for unique_event in unique_usb_events %}
+                                {% if unique_event.key == device_key %}
+                                    {% set _ = unique_event.actions.append(event.payload.action) %}
+                                    {% set _ = unique_event.timestamps.append(event.timestamp) %}
+                                {% endif %}
+                            {% endfor %}
+                        {% endif %}
+                    {% endfor %}
+
+                    <div class="mb-4">
+                        <h6 class="border-bottom pb-2">
+                            <i class="fas fa-usb text-warning"></i> USB устройства
+                            <span class="badge bg-warning ms-2">{{ unique_usb_events|length }}</span>
+                        </h6>
+                        {% if unique_usb_events %}
+                        <div class="card">
+                            <div class="card-body p-0">
+                                <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                    <table class="table table-striped table-hover mb-0">
+                                        <thead class="table-warning sticky-top" style="position: sticky; top: 0; z-index: 1;">
+                                            <tr>
+                                                <th width="40%">Устройство</th>
+                                                <th width="25%">Тип</th>
+                                                <th width="20%">Статус</th>
+                                                <th width="15%">Время</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for unique_event in unique_usb_events %}
+                                            {% set event = unique_event.event %}
+                                            <tr>
+                                                <td>
+                                                    <strong>{{ event.payload.device_name|default('USB устройство', true) }}</strong>
+                                                    {% if event.payload.vendor_id and event.payload.vendor_id != 'unknown' and event.payload.product_id and event.payload.product_id != 'unknown' %}
+                                                        <br><small class="text-muted">ID: {{ event.payload.vendor_id }}:{{ event.payload.product_id }}</small>
+                                                    {% endif %}
+                                                    {% if event.payload.serial_number and event.payload.serial_number != 'unknown' %}
+                                                        <br><small class="text-muted">SN: {{ event.payload.serial_number }}</small>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    {% if 'flash' in event.payload.device_name|lower or 'cruzer' in event.payload.device_name|lower or 'drive' in event.payload.device_name|lower or 'usb' in event.payload.device_name|lower and 'disk' in event.payload.device_name|lower %}
+                                                        <i class="fas fa-sd-card text-primary"></i> Флеш-накопитель
+                                                    {% elif 'keyboard' in event.payload.device_name|lower %}
+                                                        <i class="fas fa-keyboard text-info"></i> Клавиатура
+                                                    {% elif 'mouse' in event.payload.device_name|lower %}
+                                                        <i class="fas fa-mouse text-success"></i> Мышь
+                                                    {% elif 'webcam' in event.payload.device_name|lower or 'camera' in event.payload.device_name|lower %}
+                                                        <i class="fas fa-camera text-warning"></i> Камера
+                                                    {% elif 'phone' in event.payload.device_name|lower or 'mobile' in event.payload.device_name|lower %}
+                                                        <i class="fas fa-mobile-alt text-purple"></i> Телефон
+                                                    {% elif 'disk' in event.payload.device_name|lower or 'hdd' in event.payload.device_name|lower %}
+                                                        <i class="fas fa-hdd text-secondary"></i> Внешний диск
+                                                    {% else %}
+                                                        <i class="fas fa-plug text-dark"></i> USB устройство
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    {% if 'connected' in unique_event.actions and 'disconnected' in unique_event.actions %}
+                                                        <span class="badge bg-primary">Было подключено</span>
+                                                    {% elif 'connected' in unique_event.actions %}
+                                                        <span class="badge bg-success">Подключен</span>
+                                                    {% elif 'disconnected' in unique_event.actions %}
+                                                        <span class="badge bg-danger">Отключен</span>
+                                                    {% else %}
+                                                        <span class="badge bg-secondary">{{ event.payload.action|default('—', true) }}</span>
+                                                    {% endif %}
+                                                    <br>
+                                                    <small class="text-muted">
+                                                        {% set connections = unique_event.actions|select('equalto', 'connected')|list|length %}
+                                                        {% set disconnections = unique_event.actions|select('equalto', 'disconnected')|list|length %}
+                                                        {{ connections }}📥 {{ disconnections }}📤
+                                                    </small>
+                                                </td>
+                                                <td>
+                                                    {% set last_timestamp = unique_event.timestamps|sort|last %}
+                                                    <small class="text-muted">{{ last_timestamp.strftime('%H:%M') }}</small>
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        {% else %}
+                        <div class="alert alert-light text-center py-3">
+                            <i class="fas fa-usb fa-2x text-muted mb-2"></i>
+                            <p class="mb-0 text-muted">USB устройства не подключались в выбранный период</p>
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Печать документов -->
+                    {% set print_events = report_data|selectattr('data_type', 'equalto', 'print')|list %}
+                    {% set unique_print_events = [] %}
+                    {% for event in print_events %}
+                        {% set doc_key = event.payload.document_name ~ event.payload.printer_name %}
+                        {% if doc_key not in unique_print_events|map(attribute='key')|list %}
+                            {% set _ = unique_print_events.append({
+                                'event': event,
+                                'key': doc_key,
+                                'count': 1
+                            }) %}
+                        {% else %}
+                            {% for unique_event in unique_print_events %}
+                                {% if unique_event.key == doc_key %}
+                                    {% set _ = unique_event.update({'count': unique_event.count + 1}) %}
+                                {% endif %}
+                            {% endfor %}
+                        {% endif %}
+                    {% endfor %}
+
+                    <div class="mb-4">
+                        <h6 class="border-bottom pb-2">
+                            <i class="fas fa-print text-purple"></i> Печать документов
+                            <span class="badge bg-purple ms-2">{{ unique_print_events|length }}</span>
+                        </h6>
+                        {% if unique_print_events %}
+                        <div class="card">
+                            <div class="card-body p-0">
+                                <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                    <table class="table table-striped table-hover mb-0">
+                                        <thead class="table-purple sticky-top" style="position: sticky; top: 0; z-index: 1;">
+                                            <tr>
+                                                <th width="25%">Документ</th>
+                                                <th width="20%">Принтер</th>
+                                                <th width="10%">Страницы</th>
+                                                <th width="10%">Копии</th>
+                                                <th width="15%">Размер</th>
+                                                <th width="10%">Цвет</th>
+                                                <th width="10%">Время</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for unique_event in unique_print_events %}
+                                            {% set event = unique_event.event %}
+                                            <tr>
+                                                <td>
+                                                    <div class="d-flex align-items-center">
+                                                        {% if event.payload.document_name and 'отчет' in event.payload.document_name|lower %}
+                                                            <i class="fas fa-chart-bar text-primary me-2"></i>
+                                                        {% elif event.payload.document_name and 'договор' in event.payload.document_name|lower or 'contract' in event.payload.document_name|lower %}
+                                                            <i class="fas fa-file-contract text-success me-2"></i>
+                                                        {% elif event.payload.document_name and 'презентация' in event.payload.document_name|lower or 'presentation' in event.payload.document_name|lower %}
+                                                            <i class="fas fa-presentation text-warning me-2"></i>
+                                                        {% elif event.payload.document_name and 'чек' in event.payload.document_name|lower or 'receipt' in event.payload.document_name|lower %}
+                                                            <i class="fas fa-receipt text-info me-2"></i>
+                                                        {% else %}
+                                                            <i class="fas fa-file text-secondary me-2"></i>
+                                                        {% endif %}
+                                                        <div>
+                                                            <strong class="text-break">{{ event.payload.document_name|default('Без названия', true) }}</strong>
+                                                            {% if unique_event.count > 1 %}
+                                                                <br><small class="text-muted">Напечатан {{ unique_event.count }} раз</small>
+                                                            {% endif %}
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="d-flex align-items-center">
+                                                        {% if 'hp' in event.payload.printer_name|lower %}
+                                                            <i class="fas fa-print text-danger me-2"></i>
+                                                        {% elif 'canon' in event.payload.printer_name|lower %}
+                                                            <i class="fas fa-print text-primary me-2"></i>
+                                                        {% elif 'epson' in event.payload.printer_name|lower %}
+                                                            <i class="fas fa-print text-success me-2"></i>
+                                                        {% else %}
+                                                            <i class="fas fa-print text-secondary me-2"></i>
+                                                        {% endif %}
+                                                        <span>{{ event.payload.printer_name|default('Неизвестный принтер', true)|truncate(20) }}</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    {% if event.payload.pages and event.payload.pages > 0 %}
+                                                        <span class="badge bg-primary">{{ event.payload.pages }} стр.</span>
+                                                    {% else %}
+                                                        <span class="text-muted">—</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    {% if event.payload.copies and event.payload.copies > 1 %}
+                                                        <span class="badge bg-secondary">{{ event.payload.copies }} шт.</span>
+                                                    {% else %}
+                                                        <span class="text-muted">—</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    {% if event.payload.file_size %}
+                                                        <small>{{ event.payload.file_size }}</small>
+                                                    {% else %}
+                                                        <span class="text-muted">—</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    {% if event.payload.color_mode %}
+                                                        {% if event.payload.color_mode == 'color' %}
+                                                            <span class="badge bg-danger">Цвет</span>
+                                                        {% else %}
+                                                            <span class="badge bg-dark">Ч/Б</span>
+                                                        {% endif %}
+                                                    {% else %}
+                                                        <span class="text-muted">—</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    <small class="text-muted">{{ event.timestamp.strftime('%H:%M') }}</small>
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        {% else %}
+                        <div class="alert alert-light text-center py-3">
+                            <i class="fas fa-print fa-2x text-muted mb-2"></i>
+                            <p class="mb-0 text-muted">Документы не печатались в выбранный период</p>
+                        </div>
+                        {% endif %}
+                    </div>
+                {% else %}
+                    <div class="alert alert-info text-center">
+                        <i class="fas fa-info-circle fa-2x mb-3"></i>
+                        <h5>Нет данных за выбранный период</h5>
+                        <p class="mb-0">Для выбранного компьютера и периода времени данные отсутствуют.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentRequestId = null;
+let statusCheckInterval = null;
+const maxHours = { max_hours };
+
+// Загрузка исторического отчета
+function loadHistoricalReport() {
+    var clientId = document.getElementById('clientSelect').value;
+    var startTime = document.getElementById('startTime').value;
+    var endTime = document.getElementById('endTime').value;
+    
+    if (!clientId) {
+        alert('Выберите компьютер для просмотра отчета');
+        return false;
+    }
+    
+    // Валидация периода
+    var start = new Date(startTime);
+    var end = new Date(endTime);
+    var hoursDiff = (end - start) / (1000 * 60 * 60);
+    
+    if (hoursDiff > maxHours) {
+        alert('Ошибка: период не может превышать ' + maxHours + ' часов');
+        return false;
+    }
+    
+    if (hoursDiff <= 0) {
+        alert('Ошибка: конец периода должен быть после начала');
+        return false;
+    }
+    
+    return true;
+}
+
+// Обработчик отправки формы
+document.addEventListener('DOMContentLoaded', function() {
+    var reportForm = document.getElementById('reportForm');
+    if (reportForm) {
+        reportForm.addEventListener('submit', function(e) {
+            if (!loadHistoricalReport()) {
+                e.preventDefault();
+            }
+        });
+    }
+    
+    // Активируем кнопку запроса отчета при выборе клиента
+    var clientSelect = document.getElementById('clientSelect');
+    if (clientSelect) {
+        clientSelect.addEventListener('change', function() {
+            var requestBtn = document.getElementById('requestReportBtn');
+            if (requestBtn) {
+                requestBtn.disabled = !this.value;
+            }
+        });
+        
+        // Инициализируем состояние кнопки при загрузке
+        var requestBtn = document.getElementById('requestReportBtn');
+        if (requestBtn) {
+            requestBtn.disabled = !clientSelect.value;
+        }
+    }
+    
+    // Автоматическое обновление времени при изменении
+    var startTimeInput = document.getElementById('startTime');
+    if (startTimeInput) {
+        startTimeInput.addEventListener('change', function() {
+            var start = new Date(this.value);
+            var end = new Date(start.getTime() + maxHours * 60 * 60 * 1000);
+            var endTimeInput = document.getElementById('endTime');
+            if (endTimeInput) {
+                endTimeInput.value = end.toISOString().slice(0, 16);
+            }
+        });
+    }
+});
+
+// Функция запроса живого отчета
+async function requestLiveReport() {
+    var clientId = document.getElementById('clientSelect').value;
+    var clientName = document.getElementById('clientSelect').options[document.getElementById('clientSelect').selectedIndex].text;
+    
+    if (!clientId) {
+        alert('Выберите компьютер для запроса отчета');
+        return;
+    }
+    
+    try {
+        // Скрываем исторический отчет, показываем живой
+        document.getElementById('historicalReportSection').style.display = 'none';
+        document.getElementById('liveReportSection').style.display = 'block';
+        document.getElementById('currentClient').textContent = clientName;
+        document.getElementById('liveReportClientName').textContent = clientName;
+        
+        // Отправляем запрос серверу
+        var response = await fetch('/api/request-report', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                client_id: clientId
+            })
+        });
+        
+        var result = await response.json();
+        
+        if (result.status === 'success') {
+            currentRequestId = result.request_id;
+            document.getElementById('currentRequestId').textContent = currentRequestId;
+            
+            // Запускаем проверку статуса
+            startStatusChecking();
+        } else {
+            alert('Ошибка: ' + result.message);
+            document.getElementById('liveReportSection').style.display = 'none';
+        }
+        
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('Произошла ошибка при запросе отчета');
+        document.getElementById('liveReportSection').style.display = 'none';
+    }
+}
+
+// Функция проверки статуса
+function startStatusChecking() {
+    if (statusCheckInterval) {
+        clearInterval(statusCheckInterval);
+    }
+    
+    statusCheckInterval = setInterval(async function() {
+        try {
+            var response = await fetch('/api/check-report-status/' + currentRequestId);
+            var result = await response.json();
+            
+            if (result.status === 'success') {
+                if (result.request_status === 'completed') {
+                    // Данные получены, загружаем отчет
+                    clearInterval(statusCheckInterval);
+                    await loadLiveReportData();
+                } else if (result.request_status === 'timeout') {
+                    // Таймаут
+                    clearInterval(statusCheckInterval);
+                    document.getElementById('reportStatus').innerHTML = 
+                        '<div class="alert alert-danger text-center">' +
+                        '<i class="fas fa-exclamation-triangle fa-2x mb-2"></i>' +
+                        '<h5>Время ожидания истекло</h5>' +
+                        '<p>Клиент не ответил в течение 5 минут.</p>' +
+                        '<button class="btn btn-warning" onclick="requestLiveReport()">' +
+                        '<i class="fas fa-redo"></i> Попробовать снова' +
+                        '</button>' +
+                        '</div>';
+                }
+            }
+        } catch (error) {
+            console.error('Ошибка проверки статуса:', error);
+        }
+    }, 2000);
+}
+
+// Функция загрузки данных отчета
+async function loadLiveReportData() {
+    try {
+        var response = await fetch('/api/get-report-data/' + currentRequestId);
+        var result = await response.json();
+        
+        if (result.status === 'success') {
+            // Скрываем блок ожидания, показываем результат
+            document.getElementById('reportStatus').style.display = 'none';
+            document.getElementById('reportResult').style.display = 'block';
+            
+            // Форматируем и отображаем данные в том же формате что и исторический отчет
+            displayLiveReport(result.data);
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки отчета:', error);
+        document.getElementById('reportStatus').innerHTML = 
+            '<div class="alert alert-danger text-center">' +
+            '<i class="fas fa-exclamation-triangle"></i>' +
+            'Ошибка загрузки отчета: ' + error.message +
+            '</div>';
+    }
+}
+
+// Функция отображения живого отчета в том же формате что и исторический
+function displayLiveReport(data) {
+    var reportResult = document.getElementById('reportResult');
+    var totalEvents = 0;
+    var html = '';
+
+    // Статистика
+    if (data.processes) totalEvents += data.processes.length;
+    if (data.websites) totalEvents += data.websites.length;
+    if (data.usb_devices) totalEvents += data.usb_devices.length;
+    if (data.print_jobs) totalEvents += data.print_jobs.length;
+
+    html += '<div class="row mb-4">' +
+        '<div class="col-md-3">' +
+            '<div class="card text-white bg-success">' +
+                '<div class="card-body text-center">' +
+                    '<h4>' + totalEvents + '</h4>' +
+                    '<p class="mb-0">Всего событий</p>' +
+                '</div>' +
+            '</div>' +
+        '</div>' +
+        '<div class="col-md-3">' +
+            '<div class="card text-white bg-info">' +
+                '<div class="card-body text-center">' +
+                    '<h4>' + (data.websites ? data.websites.length : 0) + '</h4>' +
+                    '<p class="mb-0">Веб-сайтов</p>' +
+                '</div>' +
+            '</div>' +
+        '</div>' +
+        '<div class="col-md-3">' +
+            '<div class="card text-white bg-warning">' +
+                '<div class="card-body text-center">' +
+                    '<h4>' + (data.processes ? data.processes.length : 0) + '</h4>' +
+                    '<p class="mb-0">Программ</p>' +
+                '</div>' +
+            '</div>' +
+        '</div>' +
+        '<div class="col-md-3">' +
+            '<div class="card text-white bg-primary">' +
+                '<div class="card-body text-center">' +
+                    '<h4>Текущий</h4>' +
+                    '<p class="mb-0">Моментальный снимок</p>' +
+                '</div>' +
+            '</div>' +
+        '</div>' +
+    '</div>';
+
+    // Программы
+    // Программы
+    if (data.processes && data.processes.length > 0) {
+        html += '<div class="mb-4">' +
+            '<h6 class="border-bottom pb-2">' +
+                '<i class="fas fa-desktop text-info"></i> Запущенные программы' +
+                '<span class="badge bg-info ms-2">' + data.processes.length + '</span>' +
+            '</h6>' +
+            '<div class="card">' +
+                '<div class="card-body p-0">' +
+                    '<div class="table-responsive" style="max-height: 300px; overflow-y: auto;">' +
+                        '<table class="table table-striped table-hover mb-0">' +
+                            '<thead class="table-info sticky-top" style="position: sticky; top: 0; z-index: 1;">' +
+                                '<tr><th width="60%">Название программы</th><th width="20%">Память</th><th width="20%">Время</th></tr>' +
+                            '</thead>' +
+                            '<tbody>';
+
+        for (var i = 0; i < data.processes.length; i++) {
+            var process = data.processes[i];
+            
+            // ИСПРАВЛЕНИЕ: используем правильные поля из данных клиента
+            var processName = process.name || process.process_name || process.file_name || 'Неизвестная программа';
+            var processMemory = process.memory || process.memory_mb || process.working_set || '';
+            
+            // Форматируем память
+            var memoryDisplay = '';
+            if (processMemory) {
+                if (typeof processMemory === 'number') {
+                    memoryDisplay = processMemory + ' МБ';
+                } else if (processMemory.includes('MB') || processMemory.includes('МБ')) {
+                    memoryDisplay = processMemory;
+                } else {
+                    memoryDisplay = processMemory + ' МБ';
+                }
+            }
+            
+            html += '<tr>' +
+                '<td><strong>' + processName + '</strong></td>' +
+                '<td>' + (memoryDisplay ? '<span class="badge bg-secondary">' + memoryDisplay + '</span>' : '<span class="text-muted">—</span>') + '</td>' +
+                '<td><small class="text-muted">' + (process.timestamp ? new Date(process.timestamp).toLocaleTimeString() : 'Текущее') + '</small></td>' +
+            '</tr>';
+        }
+
+        html += '</tbody></table></div></div></div></div>';
+    }
+
+    // Веб-сайты
+    if (data.websites && data.websites.length > 0) {
+        html += '<div class="mb-4">' +
+            '<h6 class="border-bottom pb-2">' +
+                '<i class="fas fa-globe text-success"></i> Посещенные веб-сайты' +
+                '<span class="badge bg-success ms-2">' + data.websites.length + '</span>' +
+            '</h6>' +
+            '<div class="card">' +
+                '<div class="card-body p-0">' +
+                    '<div class="table-responsive" style="max-height: 300px; overflow-y: auto;">' +
+                        '<table class="table table-striped table-hover mb-0">' +
+                            '<thead class="table-success sticky-top" style="position: sticky; top: 0; z-index: 1;">' +
+                                '<tr><th width="30%">Браузер</th><th width="50%">Адрес сайта</th><th width="20%">Время</th></tr>' +
+                            '</thead>' +
+                            '<tbody>';
+
+        for (var i = 0; i < data.websites.length; i++) {
+            var site = data.websites[i];
+            var displayUrl = site.url ? site.url.replace('https://', '').replace('http://', '') : '';
+            if (displayUrl.length > 60) displayUrl = displayUrl.substring(0, 60) + '...';
+            
+            html += '<tr>' +
+                '<td><span class="badge bg-light text-dark">' + (site.browser || '—') + '</span></td>' +
+                '<td><small class="text-break">' + (displayUrl || '—') + '</small></td>' +
+                '<td><small class="text-muted">' + (site.timestamp ? new Date(site.timestamp).toLocaleTimeString() : 'Текущее') + '</small></td>' +
+            '</tr>';
+        }
+
+        html += '</tbody></table></div></div></div></div>';
+    }
+
+    // USB устройства
+    if (data.usb_devices && data.usb_devices.length > 0) {
+        html += '<div class="mb-4">' +
+            '<h6 class="border-bottom pb-2">' +
+                '<i class="fas fa-usb text-warning"></i> USB устройства' +
+                '<span class="badge bg-warning ms-2">' + data.usb_devices.length + '</span>' +
+            '</h6>' +
+            '<div class="card">' +
+                '<div class="card-body p-0">' +
+                    '<div class="table-responsive" style="max-height: 400px; overflow-y: auto;">' +
+                        '<table class="table table-striped table-hover mb-0">' +
+                            '<thead class="table-warning sticky-top" style="position: sticky; top: 0; z-index: 1;">' +
+                                '<tr><th width="40%">Устройство</th><th width="25%">Тип</th><th width="20%">Статус</th><th width="15%">Время</th></tr>' +
+                            '</thead>' +
+                            '<tbody>';
+
+        for (var i = 0; i < data.usb_devices.length; i++) {
+            var device = data.usb_devices[i];
+            var deviceType = 'USB устройство';
+            var deviceIcon = '<i class="fas fa-plug text-dark"></i>';
+            
+            if (device.device_name) {
+                var name = device.device_name.toLowerCase();
+                if (name.includes('flash') || name.includes('cruzer') || name.includes('drive') || (name.includes('usb') && name.includes('disk'))) {
+                    deviceType = 'Флеш-накопитель';
+                    deviceIcon = '<i class="fas fa-sd-card text-primary"></i>';
+                } else if (name.includes('keyboard')) {
+                    deviceType = 'Клавиатура';
+                    deviceIcon = '<i class="fas fa-keyboard text-info"></i>';
+                } else if (name.includes('mouse')) {
+                    deviceType = 'Мышь';
+                    deviceIcon = '<i class="fas fa-mouse text-success"></i>';
+                } else if (name.includes('webcam') || name.includes('camera')) {
+                    deviceType = 'Камера';
+                    deviceIcon = '<i class="fas fa-camera text-warning"></i>';
+                } else if (name.includes('phone') || name.includes('mobile')) {
+                    deviceType = 'Телефон';
+                    deviceIcon = '<i class="fas fa-mobile-alt text-purple"></i>';
+                } else if (name.includes('disk') || name.includes('hdd')) {
+                    deviceType = 'Внешний диск';
+                    deviceIcon = '<i class="fas fa-hdd text-secondary"></i>';
+                }
+            }
+            
+            var statusBadge = device.action === 'connected' ? 
+                '<span class="badge bg-success">Подключен</span>' : 
+                '<span class="badge bg-danger">Отключен</span>';
+
+            html += '<tr>' +
+                '<td><strong>' + (device.device_name || 'USB устройство') + '</strong>' +
+                    (device.vendor_id && device.vendor_id !== 'unknown' && device.product_id && device.product_id !== 'unknown' ? 
+                    '<br><small class="text-muted">ID: ' + device.vendor_id + ':' + device.product_id + '</small>' : '') +
+                    (device.serial_number && device.serial_number !== 'unknown' ? 
+                    '<br><small class="text-muted">SN: ' + device.serial_number + '</small>' : '') +
+                '</td>' +
+                '<td>' + deviceIcon + ' ' + deviceType + '</td>' +
+                '<td>' + statusBadge + '</td>' +
+                '<td><small class="text-muted">' + (device.timestamp ? new Date(device.timestamp).toLocaleTimeString() : 'Текущее') + '</small></td>' +
+            '</tr>';
+        }
+
+        html += '</tbody></table></div></div></div></div>';
+    }
+
+    // Печать документов
+    if (data.print_jobs && data.print_jobs.length > 0) {
+        html += '<div class="mb-4">' +
+            '<h6 class="border-bottom pb-2">' +
+                '<i class="fas fa-print text-purple"></i> Печать документов' +
+                '<span class="badge bg-purple ms-2">' + data.print_jobs.length + '</span>' +
+            '</h6>' +
+            '<div class="card">' +
+                '<div class="card-body p-0">' +
+                    '<div class="table-responsive" style="max-height: 400px; overflow-y: auto;">' +
+                        '<table class="table table-striped table-hover mb-0">' +
+                            '<thead class="table-purple sticky-top" style="position: sticky; top: 0; z-index: 1;">' +
+                                '<tr><th width="25%">Документ</th><th width="20%">Принтер</th><th width="10%">Страницы</th><th width="10%">Копии</th><th width="15%">Размер</th><th width="10%">Цвет</th><th width="10%">Время</th></tr>' +
+                            '</thead>' +
+                            '<tbody>';
+
+        for (var i = 0; i < data.print_jobs.length; i++) {
+            var print = data.print_jobs[i];
+            var docIcon = '<i class="fas fa-file text-secondary me-2"></i>';
+            if (print.document_name) {
+                var docName = print.document_name.toLowerCase();
+                if (docName.includes('отчет')) docIcon = '<i class="fas fa-chart-bar text-primary me-2"></i>';
+                else if (docName.includes('договор') || docName.includes('contract')) docIcon = '<i class="fas fa-file-contract text-success me-2"></i>';
+                else if (docName.includes('презентация') || docName.includes('presentation')) docIcon = '<i class="fas fa-presentation text-warning me-2"></i>';
+                else if (docName.includes('чек') || docName.includes('receipt')) docIcon = '<i class="fas fa-receipt text-info me-2"></i>';
+            }
+
+            var printerIcon = '<i class="fas fa-print text-secondary me-2"></i>';
+            if (print.printer_name) {
+                var printerName = print.printer_name.toLowerCase();
+                if (printerName.includes('hp')) printerIcon = '<i class="fas fa-print text-danger me-2"></i>';
+                else if (printerName.includes('canon')) printerIcon = '<i class="fas fa-print text-primary me-2"></i>';
+                else if (printerName.includes('epson')) printerIcon = '<i class="fas fa-print text-success me-2"></i>';
+            }
+
+            var colorBadge = print.color_mode === 'color' ? 
+                '<span class="badge bg-danger">Цвет</span>' : 
+                '<span class="badge bg-dark">Ч/Б</span>';
+
+            html += '<tr>' +
+                '<td>' +
+                    '<div class="d-flex align-items-center">' +
+                        docIcon +
+                        '<div><strong class="text-break">' + (print.document_name || 'Без названия') + '</strong></div>' +
+                    '</div>' +
+                '</td>' +
+                '<td>' +
+                    '<div class="d-flex align-items-center">' +
+                        printerIcon +
+                        '<span>' + (print.printer_name || 'Неизвестный принтер') + '</span>' +
+                    '</div>' +
+                '</td>' +
+                '<td>' + (print.pages && print.pages > 0 ? '<span class="badge bg-primary">' + print.pages + ' стр.</span>' : '<span class="text-muted">—</span>') + '</td>' +
+                '<td>' + (print.copies && print.copies > 1 ? '<span class="badge bg-secondary">' + print.copies + ' шт.</span>' : '<span class="text-muted">—</span>') + '</td>' +
+                '<td>' + (print.file_size ? '<small>' + print.file_size + '</small>' : '<span class="text-muted">—</span>') + '</td>' +
+                '<td>' + (print.color_mode ? colorBadge : '<span class="text-muted">—</span>') + '</td>' +
+                '<td><small class="text-muted">' + (print.timestamp ? new Date(print.timestamp).toLocaleTimeString() : 'Текущее') + '</small></td>' +
+            '</tr>';
+        }
+
+        html += '</tbody></table></div></div></div></div>';
+    }
+
+    // Если нет данных
+    if (totalEvents === 0) {
+        html += '<div class="alert alert-info text-center">' +
+            '<i class="fas fa-info-circle fa-2x mb-3"></i>' +
+            '<h5>Нет данных в текущем отчете</h5>' +
+            '<p class="mb-0">Клиент не предоставил данных для отчета.</p>' +
+        '</div>';
+    }
+
+    // Кнопка для нового запроса
+    html += '<div class="mt-3 text-center">' +
+        '<button class="btn btn-warning" onclick="requestLiveReport()">' +
+        '<i class="fas fa-redo"></i> Запросить новый отчет' +
+        '</button>' +
+    '</div>';
+
+    reportResult.innerHTML = html;
+    document.getElementById('liveReportEventsCount').textContent = totalEvents + ' событий';
+}
+
+// Отмена запроса
+function cancelRequest() {
+    if (statusCheckInterval) {
+        clearInterval(statusCheckInterval);
+    }
+    document.getElementById('liveReportSection').style.display = 'none';
+    document.getElementById('historicalReportSection').style.display = 'block';
+}
+</script>
+<style> .bg-gradient-indigo { background: linear-gradient(45deg, #6610f2, #6f42c1) !important; } 
+.bg-gradient-teal { background: linear-gradient(45deg, #20c997, #17a2b8) !important; } 
+.bg-gradient-orange { background: linear-gradient(45deg, #fd7e14, #e44d26) !important; } 
+.bg-gradient-pink { background: linear-gradient(45deg, #d63384, #e83e8c) !important; } </style>
+{% endblock %}
+
+<style>
+.table-responsive {
+    border-radius: 0.375rem;
+}
+
+.table-responsive table {
+    margin-bottom: 0;
+}
+
+.sticky-top {
+    backdrop-filter: blur(10px);
+    background-color: rgba(255, 255, 255, 0.95) !important;
+}
+
+.table thead th {
+    border-bottom: 2px solid #dee2e6;
+    font-weight: 600;
+    font-size: 0.875rem;
+}
+
+/* Цвета для заголовков таблиц */
+.table-info thead {
+    background-color: #d1ecf1 !important;
+}
+
+.table-success thead {
+    background-color: #d1f2eb !important;
+}
+
+.table-warning thead {
+    background-color: #fff3cd !important;
+}
+
+.table-purple thead {
+    background-color: #e2d9f3 !important;
+}
+
+.table-secondary thead {
+    background-color: #e2e3e5 !important;
+}
+
+/* Стили для скроллбара */
+.table-responsive::-webkit-scrollbar {
+    width: 8px;
+}
+
+.table-responsive::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 0 0.375rem 0.375rem 0;
+}
+
+.table-responsive::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+}
+
+.table-responsive::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
+
+.text-break {
+    word-break: break-word;
+}
+
+.bg-purple {
+    background-color: #6f42c1 !important;
+}
+
+.bg-orange {
+    background-color: #fd7e14 !important;
+}
+.ser {
+    background-color: #6369a1 !important;
+}
+
+</style>
